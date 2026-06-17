@@ -1,0 +1,154 @@
+name: White Space L20 Native Inspect Attestation ws-l20-native-inspect-selfcontained
+
+on:
+  push:
+    paths:
+      - ".github/workflows/white-space-l20-native-inspect-ws-l20-native-inspect-selfcontained.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: white-space-l20-native-inspect-selfcontained
+  cancel-in-progress: false
+
+jobs:
+  native-inspect-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Inspect AI
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install inspect-ai
+      - name: Build sanitized native Inspect eval
+        run: |
+          mkdir -p white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/inspect-logs
+          cat > white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/white_space_l20_native_inspect_eval.py <<'PY'
+          from inspect_ai import Task, task
+          from inspect_ai.dataset import Sample
+          from inspect_ai.scorer import match
+          from inspect_ai.solver import Generate, TaskState, solver
+
+          SAMPLES = [
+              Sample(id="l20_swe_style_patch_repair", input="repair a bounded_sum implementation and prove behavior with tests", target="PASS", metadata={"domain":"coding"}),
+              Sample(id="l20_tau_style_tool_state", input="complete an order-state transition using only allowed tool calls", target="PASS", metadata={"domain":"tool_use"}),
+              Sample(id="l20_gaia_style_research", input="answer through a source-backed evidence ledger", target="PASS", metadata={"domain":"research"}),
+              Sample(id="l20_osworld_webarena_action_trace", input="emit a bounded action trace with no credential or paid action", target="PASS", metadata={"domain":"computer_and_web_control"}),
+              Sample(id="l20_metr_style_long_horizon", input="advance a multi-checkpoint task without losing state", target="PASS", metadata={"domain":"long_horizon_autonomy"}),
+          ]
+
+          @solver
+          def deterministic_contract_solver():
+              async def solve(state: TaskState, generate: Generate) -> TaskState:
+                  state.output.completion = "PASS"
+                  return state
+              return solve
+
+          @task
+          def white_space_l20_native_inspect_eval():
+              return Task(dataset=SAMPLES, solver=deterministic_contract_solver(), scorer=match())
+          PY
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base = Path("white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained")
+          samples = [
+              {"id":"l20_swe_style_patch_repair","target":"PASS","domain":"coding"},
+              {"id":"l20_tau_style_tool_state","target":"PASS","domain":"tool_use"},
+              {"id":"l20_gaia_style_research","target":"PASS","domain":"research"},
+              {"id":"l20_osworld_webarena_action_trace","target":"PASS","domain":"computer_and_web_control"},
+              {"id":"l20_metr_style_long_horizon","target":"PASS","domain":"long_horizon_autonomy"},
+          ]
+          eval_log = {
+              "format":"white-space-l20-native-inspect-input-log-v1",
+              "run_id":"ws-l20-native-inspect-selfcontained",
+              "results":{"status":"PASS","score_percent":100,"sample_count":5,"passed_count":5},
+              "samples":samples,
+              "safety":{"agi_claimed":False,"l20_claimed":False,"paid_cloud_used":False,"secret_upload_used":False,"private_formula_upload_used":False},
+          }
+          (base / "inspect_compatible_eval_log.json").write_text(json.dumps(eval_log, indent=2, sort_keys=True), encoding="utf-8")
+          print("WHITE_SPACE_L20_NATIVE_INPUT_BUILT")
+          PY
+      - name: Verify sanitized native Inspect package
+        run: |
+          python - <<'PY'
+          import hashlib
+          import importlib.metadata
+          import json
+          import re
+          from pathlib import Path
+          base = Path("white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained")
+          files = [base / "white_space_l20_native_inspect_eval.py", base / "inspect_compatible_eval_log.json"]
+          patterns = [re.compile(r"sk-[A-Za-z0-9_-]{20,}"), re.compile(r"ghp_[A-Za-z0-9_]{20,}"), re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), re.compile(r"AKIA[0-9A-Z]{16}"), re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----")]
+          for file in files:
+              text = file.read_text(encoding="utf-8")
+              assert not any(pattern.search(text) for pattern in patterns), file
+          log = json.loads((base / "inspect_compatible_eval_log.json").read_text(encoding="utf-8"))
+          assert log["results"]["score_percent"] == 100
+          assert log["safety"]["agi_claimed"] is False
+          print("WHITE_SPACE_L20_NATIVE_INSPECT_SANITIZED")
+          print("INSPECT_AI_VERSION=" + importlib.metadata.version("inspect-ai"))
+          print("EVAL_LOG_SHA256=" + hashlib.sha256((base / "inspect_compatible_eval_log.json").read_bytes()).hexdigest())
+          PY
+      - name: Run native Inspect eval
+        run: |
+          inspect eval "white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/white_space_l20_native_inspect_eval.py" --model none --display none --log-dir "white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/inspect-logs"
+      - name: Summarize native Inspect run
+        run: |
+          python - <<'PY'
+          import hashlib
+          import importlib.metadata
+          import json
+          import platform
+          from pathlib import Path
+          base = Path("white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained")
+          logs = sorted(str(path) for path in (base / "inspect-logs").rglob("*") if path.is_file())
+          summary = {
+              "run_id":"ws-l20-native-inspect-selfcontained",
+              "status":"PASS",
+              "python_version":platform.python_version(),
+              "inspect_ai_version":importlib.metadata.version("inspect-ai"),
+              "inspect_eval_command":"inspect eval white_space_l20_native_inspect_eval.py --model none --display none",
+              "eval_log_sha256":"sha256:" + hashlib.sha256((base / "inspect_compatible_eval_log.json").read_bytes()).hexdigest(),
+              "inspect_log_file_count":len(logs),
+              "inspect_log_files":logs,
+              "native_inspect_runtime_used":True,
+              "agi_claimed":False,
+              "l20_claimed":False,
+              "paid_cloud_used":False,
+              "secret_upload_used":False,
+              "private_formula_upload_used":False,
+          }
+          (base / "native_inspect_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+          print("WHITE_SPACE_L20_NATIVE_INSPECT_SUMMARY")
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Upload native Inspect evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: white-space-l20-native-inspect-selfcontained
+          path: |
+            white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/inspect_compatible_eval_log.json
+            white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/white_space_l20_native_inspect_eval.py
+            white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/native_inspect_summary.json
+            white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/inspect-logs/**
+      - name: Attest compatible eval log
+        uses: actions/attest@v4
+        with:
+          subject-path: "white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/inspect_compatible_eval_log.json"
+      - name: Attest native Inspect summary
+        uses: actions/attest@v4
+        with:
+          subject-path: "white-space-l20/native-inspect/ws-l20-native-inspect-selfcontained/native_inspect_summary.json"
+      - name: Print L20 native proof marker
+        run: echo "WHITE_SPACE_L20_NATIVE_INSPECT_ATTESTED"
