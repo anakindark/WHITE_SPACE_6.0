@@ -1,0 +1,41 @@
+name: White Space L18 Zero Cost Proof ws-l18-20260617-175951-68018b02
+
+on:
+  push:
+    paths:
+      - "white-space-l18/proofs/ws-l18-20260617-175951-68018b02.json"
+      - ".github/workflows/white-space-l18-zero-cost-proof-ws-l18-20260617-175951-68018b02.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: white-space-l18-ws-l18-20260617-175951-68018b02
+  cancel-in-progress: false
+
+jobs:
+  verify-l18-payload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify L18 sanitized payload
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload_path = Path("white-space-l18/proofs/ws-l18-20260617-175951-68018b02.json")
+          data = json.loads(payload_path.read_text(encoding="utf-8"))
+          safety = data["safety_invariants"]
+          assert data["proof_id"] == "ws-l18-20260617-175951-68018b02"
+          assert safety["agi_claimed"] is False
+          assert safety["paid_cloud_used"] is False
+          assert safety["budget_cap_usd"] == 0
+          assert safety["secret_upload_used"] is False
+          assert safety["private_formula_upload_used"] is False
+          assert safety["public_payload_only"] is True
+          print("WHITE_SPACE_L18_ZERO_COST_PROOF_PASS")
+          PY
