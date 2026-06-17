@@ -1,0 +1,87 @@
+{
+  "approval_hash": "12d146e99838890bf02c1fdd2bde1e03ad24c2cfd38aeb7bea004197e308e46b",
+  "approval_id": "white-space-l13-approval-single-github-proof-write",
+  "input_level": "WS-L12-full",
+  "input_percent": 100,
+  "l12_artifact_root_hash": "598bd74887452951df74fc6bfa55fa7ef2f87fe795413eb27182292bbf86f225",
+  "l12_artifacts": [
+    {
+      "artifact_id": "l12_readiness",
+      "bytes": 2924,
+      "exists": true,
+      "path": "output/WHITE_SPACE_L12_READINESS_REPORT.json",
+      "sha256": "383f6559269ab076e6323615213f4d513b28a8eea58546473cfd14b466d69700"
+    },
+    {
+      "artifact_id": "l12_proof",
+      "bytes": 35072,
+      "exists": true,
+      "path": "output/WHITE_SPACE_L12_PROOF_REPORT.json",
+      "sha256": "ea5db538f890cdced1b370bc8cec01ff8419bd381f776ad23d0a6dfd38c50ef9"
+    },
+    {
+      "artifact_id": "l12_approval",
+      "bytes": 1798,
+      "exists": true,
+      "path": "output/WHITE_SPACE_L12_APPROVAL_GATE.json",
+      "sha256": "e96d9d82ac065e527b8ce1d304c913cf0824a89723acc98309099f9da9c5c129"
+    },
+    {
+      "artifact_id": "l12_signed",
+      "bytes": 2826,
+      "exists": true,
+      "path": "output/WHITE_SPACE_L12_SIGNED_ATTESTATION.json",
+      "sha256": "6af534d9767c6a4122ced40d0aa17f1495e62a13e41e1d92dcbecab97529af88"
+    },
+    {
+      "artifact_id": "l12_provider",
+      "bytes": 1454,
+      "exists": true,
+      "path": "output/WHITE_SPACE_L12_CREDENTIALED_PROVIDER.json",
+      "sha256": "b65105f10a15d4fd3be8518926fbb01dbd42adb6335c92b8cc812dd91bba6415"
+    },
+    {
+      "artifact_id": "l12_consensus",
+      "bytes": 1872,
+      "exists": true,
+      "path": "output/WHITE_SPACE_L12_ATTESTATION_CONSENSUS.json",
+      "sha256": "2bc20cd8c6396d727f7f8fcacdb6d283b9d12e514795d1bfd2d7bd41a6f818f8"
+    },
+    {
+      "artifact_id": "l12_audit",
+      "bytes": 2728,
+      "exists": true,
+      "path": "output/WHITE_SPACE_L12_AUDIT_GATE.json",
+      "sha256": "6c2271e4fd7baddfaec4e910f9a7382981463bc42e9d103f7e60d02a2b5803fd"
+    },
+    {
+      "artifact_id": "l12_release",
+      "bytes": 7502,
+      "exists": true,
+      "path": "output/l12_credentialed_attestation/release_manifest.json",
+      "sha256": "e0a3c7972510000b5bba02359c8935598826ab17e42b806f0112c81bd41c911f"
+    }
+  ],
+  "l12_signature": {
+    "payload_sha256": "1cb2372bb40ccdf2f250da50a11560e8ba770d75530fb14302e963096eee6fba",
+    "public_key_sha256": "79d7c868d496230688c3f89d0b4a58300d263a7e7f3d0f3e84675be873cf3a8b",
+    "signature_sha256": "824c8bcfa6a4659f3608fc4bf20d7d113e0b0cbf61b0852ecb0ba4200241ac5b"
+  },
+  "proof_id": "ws-l13-89a906b5a6cf",
+  "proof_type": "WHITE_SPACE_L13_EXTERNAL_PERSISTENCE_REMOTE_WRITE",
+  "safety": {
+    "max_money_usd": 0,
+    "paid_cloud_used": false,
+    "private_formula_upload_used": false,
+    "remote_write_used": true,
+    "repo_visibility_changed": false,
+    "secret_upload_used": false
+  },
+  "scope": "single sanitized GitHub connector proof write; no paid cloud, no secret upload, no private formula upload",
+  "target": {
+    "branch": "main",
+    "path_prefix": "white-space-l13/proofs/",
+    "repository": "anakindark/WHITE_SPACE_6.0"
+  },
+  "timestamp": "2026-06-17T14:46:32.965233+00:00"
+}
