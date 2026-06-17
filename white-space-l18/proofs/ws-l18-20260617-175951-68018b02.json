@@ -1,0 +1,32 @@
+{
+  "branch": "main",
+  "l18_closure_rule": {
+    "cost_guard_receipt_required": true,
+    "live_provider_write_receipt_required": true,
+    "provider_readback_or_workflow_receipt_required": true,
+    "self_proof_alone_is_insufficient": true
+  },
+  "local_prerequisites": {
+    "l16_percent": 100,
+    "l16_system_level": "WS-L16-controlled-general-agent-harness-ready",
+    "l17_highest_closed": "L17",
+    "l17_next_blocker_level": "L18",
+    "l18_preflight_provider": "github_actions_zero_cost_or_modal_zero_spend_preflight"
+  },
+  "operator_goal": "go beyond controlled agentic operating system with live external evidence, without claiming real AGI",
+  "payload_path": "white-space-l18/proofs/ws-l18-20260617-175951-68018b02.json",
+  "proof_id": "ws-l18-20260617-175951-68018b02",
+  "proof_type": "white_space_l18_zero_cost_live_provider_payload",
+  "repository": "anakindark/WHITE_SPACE_6.0",
+  "safety_invariants": {
+    "agi_claimed": false,
+    "budget_cap_usd": 0,
+    "paid_cloud_used": false,
+    "private_formula_upload_used": false,
+    "public_payload_only": true,
+    "repo_visibility_change_used": false,
+    "secret_upload_used": false
+  },
+  "timestamp": "2026-06-17T17:59:52.046351+00:00",
+  "workflow_path": ".github/workflows/white-space-l18-zero-cost-proof-ws-l18-20260617-175951-68018b02.yml"
+}
