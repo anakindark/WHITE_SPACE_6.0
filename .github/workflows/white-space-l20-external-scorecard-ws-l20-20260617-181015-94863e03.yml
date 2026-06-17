@@ -1,0 +1,57 @@
+name: White Space L20 External Scorecard Candidate ws-l20-20260617-181015-94863e03
+
+on:
+  push:
+    paths:
+      - ".github/workflows/white-space-l20-external-scorecard-ws-l20-20260617-181015-94863e03.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: white-space-l20-scorecard-ws-l20-20260617-181015-94863e03
+  cancel-in-progress: false
+
+jobs:
+  external-scorecard-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run OpenSSF Scorecard
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: scorecard-results.json
+          results_format: json
+          publish_results: false
+      - name: Summarize Scorecard Candidate
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          raw = Path("scorecard-results.json")
+          data = json.loads(raw.read_text(encoding="utf-8"))
+          summary = {
+              "candidate_id": "ws-l20-20260617-181015-94863e03",
+              "source": "OpenSSF Scorecard GitHub Action",
+              "repository": "anakindark/WHITE_SPACE_6.0",
+              "score": data.get("score"),
+              "date": data.get("date"),
+              "checks_count": len(data.get("checks", [])),
+              "l20_scope_warning": "external repo/security scorecard only; not AGI benchmark",
+              "agi_claimed": False,
+          }
+          Path("white-space-l20-scorecard-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+          print("WHITE_SPACE_L20_EXTERNAL_SCORECARD_CANDIDATE")
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Upload Scorecard Candidate Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: white-space-l20-scorecard-candidate-ws-l20-20260617-181015-94863e03
+          path: |
+            scorecard-results.json
+            white-space-l20-scorecard-summary.json
