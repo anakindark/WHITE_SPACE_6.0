@@ -1,0 +1,42 @@
+name: White Space L19 GitHub Attestation ws-l19-20260617-180541-126d0036
+
+on:
+  push:
+    paths:
+      - ".github/workflows/white-space-l19-github-attestation-ws-l19-20260617-180541-126d0036.yml"
+      - "white-space-l18/proofs/ws-l18-20260617-175951-68018b02.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: white-space-l19-ws-l19-20260617-180541-126d0036
+  cancel-in-progress: false
+
+jobs:
+  attest-l18-payload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify L18 subject digest
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          subject = Path("white-space-l18/proofs/ws-l18-20260617-175951-68018b02.json")
+          digest = hashlib.sha256(subject.read_bytes()).hexdigest()
+          assert digest == "f8a471cacfbbba2a3ce4bc977c2df4fbc16685698261606e0faf82b1af492538"
+          print("WHITE_SPACE_L19_SUBJECT_DIGEST_MATCH")
+          PY
+      - name: Generate GitHub artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: "white-space-l18/proofs/ws-l18-20260617-175951-68018b02.json"
+      - name: Print L19 proof marker
+        run: echo "WHITE_SPACE_L19_GITHUB_ATTESTATION_REQUESTED"
