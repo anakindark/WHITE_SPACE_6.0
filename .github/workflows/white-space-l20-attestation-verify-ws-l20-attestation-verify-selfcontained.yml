@@ -1,0 +1,127 @@
+name: White Space L20 Attestation Verify ws-l20-attestation-verify-selfcontained
+
+on:
+  push:
+    paths:
+      - ".github/workflows/white-space-l20-attestation-verify-ws-l20-attestation-verify-selfcontained.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: white-space-l20-attestation-verify-ws-l20-attestation-verify-selfcontained
+  cancel-in-progress: false
+
+jobs:
+  verify-native-inspect-attestations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: "anakindark/WHITE_SPACE_6.0"
+      SOURCE_RUN_ID: "27714636694"
+      SOURCE_ARTIFACT_NAME: "white-space-l20-native-inspect-selfcontained"
+      SOURCE_SIGNER_WORKFLOW: "anakindark/WHITE_SPACE_6.0/.github/workflows/white-space-l20-native-inspect-ws-l20-native-inspect-selfcontained.yml"
+      SOURCE_HEAD_SHA: "a19ed958bef6a509989e6c8f4019a9525eeda79c"
+      EXPECTED_EVAL_LOG_SHA256: "cec0bf78907752693654c7d50993d7ad103c9d9e63ac51b0b36b83e95d92fec2"
+      EXPECTED_NATIVE_SUMMARY_SHA256: "defee05bd1df37b6e3b056808ad758521ef84bafc7cb72064d4cbfe89323c109"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Show GitHub CLI version
+        run: gh --version
+      - name: Download native Inspect artifact
+        run: |
+          mkdir -p downloaded verifier-output
+          gh run download "$SOURCE_RUN_ID" -R "$REPOSITORY" -n "$SOURCE_ARTIFACT_NAME" -D downloaded
+          find downloaded -maxdepth 4 -type f -print | sort
+      - name: Verify expected subject digests
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          files = {
+              "inspect_compatible_eval_log.json": os.environ["EXPECTED_EVAL_LOG_SHA256"],
+              "native_inspect_summary.json": os.environ["EXPECTED_NATIVE_SUMMARY_SHA256"],
+          }
+          for name, expected in files.items():
+              path = Path("downloaded") / name
+              assert path.exists(), path
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert actual == expected, (name, actual, expected)
+          print("WHITE_SPACE_L20_ATTESTATION_SUBJECT_DIGESTS_MATCH")
+          PY
+      - name: Verify eval log attestation
+        run: |
+          gh attestation verify downloaded/inspect_compatible_eval_log.json \
+            -R "$REPOSITORY" \
+            --signer-workflow "$SOURCE_SIGNER_WORKFLOW" \
+            --source-ref refs/heads/main \
+            --format json > verifier-output/eval_log_attestation_verify.json
+      - name: Verify native summary attestation
+        run: |
+          gh attestation verify downloaded/native_inspect_summary.json \
+            -R "$REPOSITORY" \
+            --signer-workflow "$SOURCE_SIGNER_WORKFLOW" \
+            --source-ref refs/heads/main \
+            --format json > verifier-output/native_summary_attestation_verify.json
+      - name: Summarize attestation verification
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def read_json(path):
+              return json.loads(Path(path).read_text(encoding="utf-8"))
+
+          eval_verify = read_json("verifier-output/eval_log_attestation_verify.json")
+          summary_verify = read_json("verifier-output/native_summary_attestation_verify.json")
+          summary = {
+              "run_id": "ws-l20-attestation-verify-selfcontained",
+              "status": "PASS",
+              "repository": os.environ["REPOSITORY"],
+              "source_run_id": int(os.environ["SOURCE_RUN_ID"]),
+              "source_artifact_name": os.environ["SOURCE_ARTIFACT_NAME"],
+              "source_signer_workflow": os.environ["SOURCE_SIGNER_WORKFLOW"],
+              "source_head_sha": os.environ["SOURCE_HEAD_SHA"],
+              "gh_version": subprocess.check_output(["gh", "--version"], text=True).splitlines()[0],
+              "eval_log_sha256": "sha256:" + hashlib.sha256(Path("downloaded/inspect_compatible_eval_log.json").read_bytes()).hexdigest(),
+              "native_summary_sha256": "sha256:" + hashlib.sha256(Path("downloaded/native_inspect_summary.json").read_bytes()).hexdigest(),
+              "eval_log_verified_attestation_count": len(eval_verify),
+              "native_summary_verified_attestation_count": len(summary_verify),
+              "gh_attestation_verify_used": True,
+              "artifact_consumer_verification": True,
+              "agi_claimed": False,
+              "l20_claimed": False,
+              "paid_cloud_used": False,
+              "secret_upload_used": False,
+              "private_formula_upload_used": False,
+          }
+          assert summary["eval_log_verified_attestation_count"] >= 1
+          assert summary["native_summary_verified_attestation_count"] >= 1
+          Path("verifier-output/attestation_verification_summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          print("WHITE_SPACE_L20_ATTESTATION_VERIFY_SUMMARY")
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Upload attestation verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: white-space-l20-attestation-verify-selfcontained
+          path: verifier-output/**
+      - name: Attest verifier summary
+        uses: actions/attest@v4
+        with:
+          subject-path: verifier-output/attestation_verification_summary.json
+      - name: Print L20 attestation verifier marker
+        run: echo "WHITE_SPACE_L20_ATTESTATION_VERIFIED"
