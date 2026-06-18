@@ -1,0 +1,45 @@
+name: White Space Operator Task
+description: Queue a bounded operator task for Codex/local runtime.
+title: "[WS-OP] "
+labels: ["white-space", "operator-task"]
+body:
+  - type: dropdown
+    id: privacy_tier
+    attributes:
+      label: Privacy tier
+      options:
+        - P0_PUBLIC
+        - P1_INTERNAL
+        - P2_PRIVATE
+        - P3_CRITICAL_SECRET
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should Codex do?
+    validations:
+      required: true
+  - type: textarea
+    id: allowed_actions
+    attributes:
+      label: Allowed actions
+      description: List allowed tools/surfaces, e.g. local tests, read-only GitHub, browser preview.
+    validations:
+      required: true
+  - type: textarea
+    id: forbidden_actions
+    attributes:
+      label: Forbidden actions
+      description: List actions that must remain blocked.
+      value: "No secret upload. No private formula upload. No broker/live order. No paid cloud without approval."
+    validations:
+      required: true
+  - type: textarea
+    id: proof_required
+    attributes:
+      label: Proof required
+      description: Expected evidence, report path, test result, hash, screenshot, or ledger entry.
+    validations:
+      required: true
