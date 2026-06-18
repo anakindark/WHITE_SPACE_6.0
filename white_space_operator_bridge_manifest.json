@@ -1,0 +1,36 @@
+{
+  "created_at_unix": 1781758495.4534452,
+  "default_gates": {
+    "human_final_authority": true,
+    "no_broker_execution": true,
+    "no_paid_cloud_without_budget_gate": true,
+    "no_private_formula_upload": true,
+    "no_secret_upload": true,
+    "subagent_consensus_is_not_approval": true
+  },
+  "operator_flow": [
+    "User creates or labels GitHub issue with operator task.",
+    "Codex room reads task context.",
+    "Codex runs local/private work on MacBook when needed.",
+    "Codex writes sanitized result summary/evidence hash back to GitHub only when approved.",
+    "Live/destructive/broker actions remain blocked unless a separate explicit gate is opened."
+  ],
+  "package": "WHITE_SPACE_GITHUB_OPERATOR_BRIDGE_PACKAGE",
+  "privacy_model": {
+    "github_allowed": [
+      "task queue metadata",
+      "public CI checks",
+      "sanitized capability summaries",
+      "issue/pr workflow",
+      "non-secret evidence hashes"
+    ],
+    "local_only": [
+      "TFEX private formula implementation and constants",
+      "raw market datasets",
+      "broker credentials",
+      "live trading actions",
+      "paid provider secrets"
+    ]
+  },
+  "purpose": "Use GitHub as public/control-plane companion for Codex operator-hands work."
+}
