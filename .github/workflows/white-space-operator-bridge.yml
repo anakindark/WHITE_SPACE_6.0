@@ -1,0 +1,25 @@
+name: White Space Operator Bridge
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    paths:
+      - "docs/**"
+      - "scripts/**"
+      - ".github/**"
+      - "white_space_operator_bridge_manifest.json"
+
+permissions:
+  contents: read
+
+jobs:
+  public-bridge-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run public bridge safety check
+        run: python scripts/white_space_public_ci_check.py
