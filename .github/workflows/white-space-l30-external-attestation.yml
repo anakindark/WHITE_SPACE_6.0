@@ -5,7 +5,7 @@ on:
   push:
     paths:
       - ".github/workflows/white-space-l30-external-attestation.yml"
-      - "white-space-external-evaluator/white_space_external_evaluator_package.zip.b64"
+      - "white-space-external-evaluator/chunks/payload.part.*.b64"
       - "scripts/make_l29_external_receipt.py"
 
 permissions:
@@ -27,15 +27,18 @@ jobs:
         uses: actions/checkout@v4
       - name: Verify Python
         run: python3 --version
-      - name: Verify package digest
+      - name: Rebuild package from chunks and verify digest
         run: |
+          cat white-space-external-evaluator/chunks/payload.part.*.b64 > white-space-external-evaluator/white_space_external_evaluator_package.zip.b64
           base64 -d "white-space-external-evaluator/white_space_external_evaluator_package.zip.b64" > "white-space-external-evaluator/white_space_external_evaluator_package.zip"
           python3 - <<'PY'
           import hashlib
           from pathlib import Path
+          expected = "sha256:cac70a11a88315d701c491bf95885dc498a4ee9fa5fcb5b19b8af6c29852ddb3"
           package = Path("white-space-external-evaluator/white_space_external_evaluator_package.zip")
-          assert package.exists(), package
-          print("L28_PACKAGE_SHA256=sha256:" + hashlib.sha256(package.read_bytes()).hexdigest())
+          actual = "sha256:" + hashlib.sha256(package.read_bytes()).hexdigest()
+          print("L28_PACKAGE_SHA256=" + actual)
+          assert actual == expected, {"actual": actual, "expected": expected}
           PY
       - name: Run portable external verifier
         run: |
