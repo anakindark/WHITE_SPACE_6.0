@@ -1,0 +1,58 @@
+name: White Space L30 External Attestation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/white-space-l30-external-attestation.yml"
+      - "white-space-external-evaluator/white_space_external_evaluator_package.zip.b64"
+      - "scripts/make_l29_external_receipt.py"
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: white-space-l30-external-attestation
+  cancel-in-progress: false
+
+jobs:
+  verify-l28-and-emit-l29-receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify Python
+        run: python3 --version
+      - name: Verify package digest
+        run: |
+          base64 -d "white-space-external-evaluator/white_space_external_evaluator_package.zip.b64" > "white-space-external-evaluator/white_space_external_evaluator_package.zip"
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          package = Path("white-space-external-evaluator/white_space_external_evaluator_package.zip")
+          assert package.exists(), package
+          print("L28_PACKAGE_SHA256=sha256:" + hashlib.sha256(package.read_bytes()).hexdigest())
+          PY
+      - name: Run portable external verifier
+        run: |
+          mkdir -p verifier-work verifier-output
+          python3 -m zipfile -e "white-space-external-evaluator/white_space_external_evaluator_package.zip" verifier-work
+          (cd verifier-work && python3 verify_white_space_external_package.py) | tee verifier-output/verifier_stdout.json
+      - name: Create L29 external attestation receipt
+        run: |
+          python3 "scripts/make_l29_external_receipt.py"
+      - name: Upload L29 receipt artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: white-space-l29-external-attestation-receipt
+          path: verifier-output/l29_external_attestation_receipt.json
+      - name: Attest L29 receipt
+        uses: actions/attest@v4
+        with:
+          subject-path: verifier-output/l29_external_attestation_receipt.json
+      - name: Print marker
+        run: echo "WHITE_SPACE_L30_EXTERNAL_ATTESTATION_RECEIPT_READY"
