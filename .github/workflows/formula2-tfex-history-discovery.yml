@@ -1,0 +1,74 @@
+name: Discover TFEX Historical Series API
+
+on:
+  push:
+    branches:
+      - research/formula2-rc1-holdout-20260918
+    paths:
+      - ".github/workflows/formula2-tfex-history-discovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install curl_cffi beautifulsoup4
+      - name: Inspect TFEX historical page and JS
+        run: |
+          python - <<'PY'
+          import json, re, urllib.parse
+          from pathlib import Path
+          from bs4 import BeautifulSoup
+          from curl_cffi import requests
+
+          out=Path("tfex_history_discovery"); out.mkdir(exist_ok=True)
+          s=requests.Session(impersonate="chrome")
+          page="https://www.tfex.co.th/en/market-data/historical-data/trading-statistics-by-series"
+          params={
+            "InstrumentClass":"SET50_FC",
+            "InstrumentType":"TXI_F",
+            "beginDate":"01/01/2024",
+            "endDate":"31/12/2024",
+          }
+          r=s.get(page,params=params,timeout=30)
+          (out/"page.html").write_text(r.text,encoding="utf-8")
+          soup=BeautifulSoup(r.text,"html.parser")
+          srcs=[]
+          for x in soup.find_all("script"):
+              src=x.get("src")
+              if src:
+                  srcs.append(urllib.parse.urljoin(page,src))
+          needles=["trading-statistics-by-series","historical","beginDate","endDate","InstrumentClass","api/set/tfex","trading-statistics","market-statistics"]
+          hits=[]
+          for i,u in enumerate(srcs):
+              try:
+                  rr=s.get(u,timeout=30)
+                  txt=rr.text
+                  for needle in needles:
+                      low=txt.lower(); n=needle.lower(); start=0
+                      while True:
+                          j=low.find(n,start)
+                          if j<0: break
+                          hits.append({"script":u,"needle":needle,"snippet":txt[max(0,j-600):j+1200]})
+                          start=j+len(n)
+                          if sum(1 for h in hits if h["script"]==u and h["needle"]==needle)>=8:
+                              break
+              except Exception as e:
+                  hits.append({"script":u,"error":repr(e)})
+          (out/"discovery.json").write_text(json.dumps({"page_status":r.status_code,"page_url":r.url,"scripts":srcs,"hits":hits},ensure_ascii=False,indent=2),encoding="utf-8")
+          print(json.dumps({"page_status":r.status_code,"script_count":len(srcs),"hit_count":len(hits)},sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formula2-tfex-history-discovery
+          path: tfex_history_discovery/**
+          if-no-files-found: error
+          retention-days: 7
