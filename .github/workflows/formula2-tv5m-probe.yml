@@ -1,0 +1,52 @@
+name: Formula2 TradingView 5m Sequence Probe
+
+on:
+  push:
+    branches:
+      - research/formula2-rc1-holdout-20260918
+    paths:
+      - ".github/workflows/formula2-tv5m-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install tvkit
+        run: python -m pip install "tvkit>=0.11"
+      - name: Fetch one activated day
+        run: |
+          python - <<'PY'
+          import asyncio, json
+          from datetime import datetime, UTC
+          from pathlib import Path
+          from tvkit.api.chart import OHLCV
+
+          async def main():
+              symbol="TFEX:S50U2024"
+              start=datetime(2024,9,18,17,0,tzinfo=UTC)
+              end=datetime(2024,9,19,17,0,tzinfo=UTC)
+              async with OHLCV(cookies=None) as client:
+                  bars=await client.get_historical_ohlcv(symbol, interval="5", start=start, end=end)
+              rows=[]
+              for b in bars:
+                  rows.append({
+                      "timestamp": b.timestamp,
+                      "open": b.open, "high": b.high, "low": b.low, "close": b.close, "volume": b.volume,
+                  })
+              Path("tv5m_probe").mkdir(exist_ok=True)
+              Path("tv5m_probe/S50U2024_2024-09-19.json").write_text(json.dumps(rows,indent=2),encoding="utf-8")
+              print(json.dumps({"symbol":symbol,"bars":len(rows),"first":rows[:2],"last":rows[-2:]},default=str))
+          asyncio.run(main())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formula2-tv5m-probe
+          path: tv5m_probe/**
+          retention-days: 7
