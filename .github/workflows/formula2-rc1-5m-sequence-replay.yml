@@ -50,9 +50,20 @@ jobs:
           raw=[]
           for symbol in SYMBOLS:
               api=f"https://www.tfex.co.th/api/set/tfex/series/{symbol}/historical-trading"
-              resp=sess.get(api,params={"fromDate":"01/09/2024","toDate":"18/09/2026"},headers=headers,timeout=30)
-              resp.raise_for_status()
-              body=resp.json()
+              page=f"https://www.tfex.co.th/en/products/equity/set50-index-futures/{symbol}/historical-trading"
+              body=None
+              for attempt in range(1,4):
+                  try:
+                      sess.get(page,headers=headers,timeout=30)
+                      h=dict(headers); h["referer"]=page
+                      resp=sess.get(api,params={"fromDate":"01/09/2024","toDate":"18/09/2026"},headers=h,timeout=30)
+                      if resp.status_code==200:
+                          body=resp.json(); break
+                  except Exception:
+                      pass
+                  time.sleep(attempt*2)
+              if body is None:
+                  continue
               data=body.get("data",[]) if isinstance(body,dict) else body
               for x in data:
                   try:
