@@ -1,0 +1,62 @@
+name: Inspect TFEX Historical Store Endpoints
+
+on:
+  push:
+    branches:
+      - research/formula2-rc1-holdout-20260918
+    paths:
+      - ".github/workflows/formula2-tfex-endpoint-inspect.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install curl_cffi beautifulsoup4
+      - name: Inspect endpoint literals
+        run: |
+          python - <<'PY'
+          import json,re,urllib.parse
+          from pathlib import Path
+          from curl_cffi import requests
+          from bs4 import BeautifulSoup
+          out=Path("tfex_endpoint_inspect"); out.mkdir(exist_ok=True)
+          s=requests.Session(impersonate="chrome")
+          page="https://www.tfex.co.th/en/market-data/historical-data/trading-statistics-by-series"
+          r=s.get(page,timeout=30)
+          soup=BeautifulSoup(r.text,"html.parser")
+          urls=[urllib.parse.urljoin(page,x.get("src")) for x in soup.find_all("script") if x.get("src")]
+          result=[]
+          patterns=[
+            r"/api/set/tfex[^\"'\\\s)]+",
+            r"historical-session-trading",
+            r"historical-trading",
+            r"getHistoricalTrading",
+            r"getSessionHistoricalTrading",
+          ]
+          for u in urls:
+              try:
+                  txt=s.get(u,timeout=30).text
+              except Exception as e:
+                  result.append({"script":u,"error":repr(e)}); continue
+              hits=[]
+              for pat in patterns:
+                  for m in re.finditer(pat,txt,re.I):
+                      hits.append({"pattern":pat,"match":m.group(0),"snippet":txt[max(0,m.start()-1400):m.end()+2400]})
+                      if len([h for h in hits if h["pattern"]==pat])>=30: break
+              if hits: result.append({"script":u,"hits":hits})
+          (out/"endpoints.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+          print(json.dumps({"scripts":len(urls),"matched_scripts":len(result)},sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formula2-tfex-endpoint-inspect
+          path: tfex_endpoint_inspect/**
+          retention-days: 7
