@@ -1,0 +1,209 @@
+name: Formula2 RC1 TFEX Official Holdout Fetch
+
+on:
+  push:
+    branches:
+      - research/formula2-rc1-holdout-20260918
+    paths:
+      - ".github/workflows/formula2-rc1-tfex-holdout-fetch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-official-tfex:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install fetch dependency
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install curl_cffi
+
+      - name: Fetch official TFEX contract histories
+        run: |
+          python - <<'PY'
+          import csv
+          import hashlib
+          import json
+          import math
+          import time
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          from curl_cffi import requests
+
+          SYMBOLS = [
+              "S50H24","S50M24","S50U24","S50Z24",
+              "S50H25","S50M25","S50U25","S50Z25",
+              "S50H26","S50M26","S50U26","S50Z26","S50H27",
+          ]
+          START = "2023-06-01"
+          END = "2026-09-18"
+          OUT = Path("formula2_holdout_artifact")
+          RAW = OUT / "raw"
+          RAW.mkdir(parents=True, exist_ok=True)
+
+          rows = []
+          fetch_log = []
+          session = requests.Session(impersonate="chrome")
+          headers = {
+              "accept": "application/json, text/plain, */*",
+              "accept-language": "en-US,en;q=0.9",
+              "user-agent": "Mozilla/5.0",
+          }
+
+          for symbol in SYMBOLS:
+              page = f"https://www.tfex.co.th/en/products/equity/set50-index-futures/{symbol}/historical-trading"
+              api = f"https://www.tfex.co.th/api/set/tfex/series/{symbol}/historical-trading"
+              status = None
+              body = None
+              err = None
+              for attempt in range(1, 4):
+                  try:
+                      # warm session/cookies on the public product page
+                      session.get(page, headers=headers, timeout=30)
+                      h = dict(headers)
+                      h["referer"] = page
+                      resp = session.get(api, headers=h, timeout=30)
+                      status = resp.status_code
+                      if status == 200:
+                          body = resp.json()
+                          break
+                      err = f"HTTP {status}: {resp.text[:300]}"
+                  except Exception as exc:
+                      err = repr(exc)
+                  time.sleep(attempt * 2)
+
+              if body is None:
+                  fetch_log.append({"symbol": symbol, "status": status, "error": err, "source_url": api})
+                  continue
+
+              raw_path = RAW / f"{symbol}.json"
+              raw_path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+              data = body.get("data", body) if isinstance(body, dict) else body
+              if not isinstance(data, list):
+                  fetch_log.append({"symbol": symbol, "status": status, "error": f"unexpected payload type {type(data).__name__}", "source_url": api})
+                  continue
+
+              accepted = 0
+              for x in data:
+                  if not isinstance(x, dict):
+                      continue
+                  date_raw = x.get("date")
+                  if not date_raw:
+                      continue
+                  date = str(date_raw)[:10]
+                  if not (START <= date <= END):
+                      continue
+
+                  sp = x.get("settlementPrice")
+                  chg = x.get("change")
+                  prior_from_change = None
+                  try:
+                      if sp is not None and chg is not None:
+                          prior_from_change = round(float(sp) - float(chg), 10)
+                  except Exception:
+                      prior_from_change = None
+
+                  row = {
+                      "date": date,
+                      "contract": symbol,
+                      "open": x.get("open"),
+                      "high": x.get("high"),
+                      "low": x.get("low"),
+                      "close": x.get("close", x.get("last")),
+                      "settle": sp,
+                      "change_from_prior_sp": chg,
+                      "prior_sp_from_change": prior_from_change,
+                      "volume": x.get("totalVolume", x.get("volume")),
+                      "oi": x.get("oi", x.get("openInterest")),
+                      "average": x.get("average"),
+                      "source_name": "TFEX official historical-trading API",
+                      "source_url": api,
+                  }
+                  rows.append(row)
+                  accepted += 1
+
+              fetch_log.append({"symbol": symbol, "status": status, "rows_in_payload": len(data), "rows_in_window": accepted, "source_url": api})
+
+          if not rows:
+              raise SystemExit("STOP_SOURCE: no official TFEX rows returned")
+
+          # Same-contract prior settlement cross-check, chronological.
+          rows.sort(key=lambda r: (r["contract"], r["date"]))
+          by_contract = {}
+          for r in rows:
+              prev = by_contract.get(r["contract"])
+              r["prior_sp_previous_contract_settlement"] = prev
+              delta = None
+              try:
+                  if prev is not None and r["prior_sp_from_change"] is not None:
+                      delta = float(r["prior_sp_from_change"]) - float(prev)
+              except Exception:
+                  delta = None
+              r["prior_sp_crosscheck_delta"] = delta
+              if r["settle"] is not None:
+                  try:
+                      by_contract[r["contract"]] = float(r["settle"])
+                  except Exception:
+                      pass
+
+          # Re-sort for downstream daily selection.
+          rows.sort(key=lambda r: (r["date"], r["contract"]))
+
+          fields = [
+              "date","contract","open","high","low","close","settle",
+              "change_from_prior_sp","prior_sp_from_change",
+              "prior_sp_previous_contract_settlement","prior_sp_crosscheck_delta",
+              "volume","oi","average","source_name","source_url",
+          ]
+          csv_path = OUT / "tfex_s50_contract_history_2023seed_20260918.csv"
+          with csv_path.open("w", encoding="utf-8", newline="") as f:
+              w = csv.DictWriter(f, fieldnames=fields)
+              w.writeheader()
+              w.writerows(rows)
+
+          mismatch = 0
+          comparable = 0
+          for r in rows:
+              d = r["prior_sp_crosscheck_delta"]
+              if d is None:
+                  continue
+              comparable += 1
+              if abs(float(d)) > 0.11:
+                  mismatch += 1
+
+          manifest = {
+              "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
+              "source_host": "www.tfex.co.th",
+              "source_type": "official TFEX contract-level futures historical-trading API",
+              "symbols": SYMBOLS,
+              "window": {"start": START, "end": END},
+              "row_count": len(rows),
+              "fetch_log": fetch_log,
+              "prior_sp_derivation": "settlementPrice - change; TFEX historical page defines Chg as change from Prior Settlement Price",
+              "same_contract_prior_sp_crosscheck": {
+                  "comparable_rows": comparable,
+                  "mismatch_abs_gt_0p11": mismatch,
+              },
+              "csv_sha256": hashlib.sha256(csv_path.read_bytes()).hexdigest(),
+          }
+          (OUT / "fetch_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
+          PY
+
+      - name: Upload official holdout artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: formula2-rc1-tfex-official-holdout-20260918
+          path: formula2_holdout_artifact/**
+          if-no-files-found: error
+          retention-days: 7
