@@ -1,0 +1,80 @@
+name: Formula2 RC1 TFEX Session Sequence Fetch
+
+on:
+  push:
+    branches:
+      - research/formula2-rc1-holdout-20260918
+    paths:
+      - ".github/workflows/formula2-rc1-tfex-session-fetch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install curl_cffi
+      - name: Fetch official TFEX by-session history
+        run: |
+          python - <<'PY'
+          import csv, hashlib, json, time
+          from pathlib import Path
+          from datetime import datetime, timezone
+          from curl_cffi import requests
+
+          symbols=[
+            "S50U24","S50Z24",
+            "S50H25","S50M25","S50U25","S50Z25",
+            "S50H26","S50M26","S50U26","S50Z26","S50H27"
+          ]
+          out=Path("formula2_session_artifact"); raw=out/"raw"; raw.mkdir(parents=True,exist_ok=True)
+          sess=requests.Session(impersonate="chrome")
+          h={"accept":"application/json, text/plain, */*","user-agent":"Mozilla/5.0","referer":"https://www.tfex.co.th/en/market-data/historical-data/trading-statistics-by-series"}
+          logs=[]; rows=[]
+          for symbol in symbols:
+              api=f"https://www.tfex.co.th/api/set/tfex/series/{symbol}/historical-session-trading"
+              body=None; err=None; status=None
+              for a in range(1,4):
+                  try:
+                      resp=sess.get(api,params={"fromDate":"01/09/2024","toDate":"18/09/2026"},headers=h,timeout=30)
+                      status=resp.status_code
+                      if status==200:
+                          body=resp.json(); break
+                      err=f"HTTP {status}: {resp.text[:300]}"
+                  except Exception as e:
+                      err=repr(e)
+                  time.sleep(a)
+              if body is None:
+                  logs.append({"symbol":symbol,"status":status,"error":err}); continue
+              (raw/f"{symbol}.json").write_text(json.dumps(body,ensure_ascii=False,indent=2),encoding="utf-8")
+              data=body.get("data",body) if isinstance(body,dict) else body
+              if not isinstance(data,list):
+                  logs.append({"symbol":symbol,"status":status,"error":f"payload {type(data).__name__}"}); continue
+              logs.append({"symbol":symbol,"status":status,"rows":len(data),"sample_keys":sorted(data[0].keys()) if data else []})
+              for x in data:
+                  if isinstance(x,dict):
+                      rows.append({"contract":symbol,**x})
+          if not rows:
+              raise SystemExit("STOP_SOURCE: session API returned no rows")
+          # schema union
+          keys=["contract"]+sorted({k for r in rows for k in r.keys() if k!="contract"})
+          p=out/"tfex_s50_session_history_202409_202609.csv"
+          with p.open("w",encoding="utf-8",newline="") as f:
+              w=csv.DictWriter(f,fieldnames=keys,extrasaction="ignore"); w.writeheader(); w.writerows(rows)
+          man={"retrieved_at_utc":datetime.now(timezone.utc).isoformat(),"source":"TFEX official historical-session-trading API","rows":len(rows),"logs":logs,"csv_sha256":hashlib.sha256(p.read_bytes()).hexdigest()}
+          (out/"manifest.json").write_text(json.dumps(man,ensure_ascii=False,indent=2),encoding="utf-8")
+          print(json.dumps(man,ensure_ascii=False,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formula2-rc1-tfex-session-sequence-20260918
+          path: formula2_session_artifact/**
+          if-no-files-found: error
+          retention-days: 7
