@@ -45,7 +45,7 @@ jobs:
               "S50H25","S50M25","S50U25","S50Z25",
               "S50H26","S50M26","S50U26","S50Z26","S50H27",
           ]
-          START = "2023-06-01"
+          START = "2023-12-01"
           END = "2026-09-18"
           OUT = Path("formula2_holdout_artifact")
           RAW = OUT / "raw"
@@ -72,7 +72,7 @@ jobs:
                       session.get(page, headers=headers, timeout=30)
                       h = dict(headers)
                       h["referer"] = page
-                      resp = session.get(api, headers=h, timeout=30)
+                      resp = session.get(api, headers=h, params={"fromDate":"01/12/2023","toDate":"18/09/2026"}, timeout=30)
                       status = resp.status_code
                       if status == 200:
                           body = resp.json()
@@ -127,7 +127,7 @@ jobs:
                       "oi": x.get("oi", x.get("openInterest")),
                       "average": x.get("average"),
                       "source_name": "TFEX official historical-trading API",
-                      "source_url": api,
+                      "source_url": api + "?fromDate=01%2F12%2F2023&toDate=18%2F09%2F2026",
                   }
                   rows.append(row)
                   accepted += 1
@@ -186,7 +186,7 @@ jobs:
               "source_host": "www.tfex.co.th",
               "source_type": "official TFEX contract-level futures historical-trading API",
               "symbols": SYMBOLS,
-              "window": {"start": START, "end": END},
+              "window": {"start": START, "end": END, "request_fromDate": "01/12/2023", "request_toDate": "18/09/2026"},
               "row_count": len(rows),
               "fetch_log": fetch_log,
               "prior_sp_derivation": "settlementPrice - change; TFEX historical page defines Chg as change from Prior Settlement Price",
