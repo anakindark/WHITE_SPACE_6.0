@@ -1,0 +1,301 @@
+name: Formula2 RC1 5m Sequence Replay
+
+on:
+  push:
+    branches:
+      - research/formula2-rc1-holdout-20260918
+    paths:
+      - ".github/workflows/formula2-rc1-5m-sequence-replay.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install "tvkit>=0.11" curl_cffi
+      - name: Build official RC1 events and fetch 5m post-verify bars
+        run: |
+          python - <<'PY'
+          import asyncio, csv, hashlib, json, math, time
+          from collections import defaultdict
+          from datetime import datetime, timedelta, UTC
+          from pathlib import Path
+
+          from curl_cffi import requests
+          from tvkit.api.chart import OHLCV
+
+          SYMBOLS=[
+              "S50U24","S50Z24",
+              "S50H25","S50M25","S50U25","S50Z25",
+              "S50H26","S50M26","S50U26","S50Z26","S50H27",
+          ]
+          STEP=4.5
+          K=4
+          GAP_THRESHOLD_PCT=0.5
+          COST=0.07
+          OUT=Path("formula2_5m_sequence_artifact")
+          OUT.mkdir(exist_ok=True)
+          RAW=OUT/"raw5m"; RAW.mkdir(exist_ok=True)
+
+          # -------- official TFEX daily source --------
+          sess=requests.Session(impersonate="chrome")
+          headers={"accept":"application/json, text/plain, */*","user-agent":"Mozilla/5.0"}
+          raw=[]
+          for symbol in SYMBOLS:
+              api=f"https://www.tfex.co.th/api/set/tfex/series/{symbol}/historical-trading"
+              resp=sess.get(api,params={"fromDate":"01/09/2024","toDate":"18/09/2026"},headers=headers,timeout=30)
+              resp.raise_for_status()
+              body=resp.json()
+              data=body.get("data",[]) if isinstance(body,dict) else body
+              for x in data:
+                  try:
+                      raw.append({
+                          "date":str(x["date"])[:10],
+                          "contract":symbol,
+                          "open":float(x["open"]),
+                          "high":float(x["high"]),
+                          "low":float(x["low"]),
+                          "close":float(x.get("close",x.get("last"))),
+                          "settle":float(x["settlementPrice"]),
+                          "volume":float(x.get("totalVolume",x.get("volume"))),
+                      })
+                  except Exception:
+                      pass
+
+          raw.sort(key=lambda r:(r["date"],r["contract"]))
+          # prior same-contract settlement
+          prior_settle={}
+          for r in raw:
+              r["close_ref"]=prior_settle.get(r["contract"])
+              r["close_ref_source_date"]=None
+              # source date tracking
+              prior_settle[r["contract"]]=r["settle"]
+          # need source dates in second pass
+          last_date={}
+          for r in raw:
+              r["close_ref_source_date"]=last_date.get(r["contract"])
+              last_date[r["contract"]]=r["date"]
+
+          by_date=defaultdict(list)
+          for r in raw: by_date[r["date"]].append(r)
+
+          prior_volume={}
+          prior_volume_date={}
+          selected=[]
+          for date in sorted(by_date):
+              day=by_date[date]
+              eligible=[r for r in day if r["contract"] in prior_volume and r["close_ref"] is not None]
+              if eligible:
+                  eligible.sort(key=lambda r:(-prior_volume[r["contract"]],r["contract"]))
+                  r=dict(eligible[0])
+                  r["active_selection_prior_volume"]=prior_volume[r["contract"]]
+                  r["active_selection_volume_source_date"]=prior_volume_date[r["contract"]]
+                  gap=(r["open"]-r["close_ref"])/r["close_ref"]*100
+                  r["gap_pct"]=gap
+                  r["regime"]="BIG" if abs(gap)>=GAP_THRESHOLD_PCT else "SMALL"
+                  r["direction"]="UP" if gap>0 else ("DOWN" if gap<0 else "NONE")
+                  if r["regime"]=="BIG":
+                      d=1 if r["direction"]=="UP" else -1
+                      r["confirmation"]=r["open"]+d*STEP
+                      r["activated"]=(r["high"]>=r["confirmation"]-1e-9) if d>0 else (r["low"]<=r["confirmation"]+1e-9)
+                      r["levels"]=[r["open"]+d*STEP*i for i in range(1,K+2)] # confirmation, exits1..4
+                  else:
+                      r["confirmation"]=None; r["activated"]=False; r["levels"]=[]
+                  selected.append(r)
+              for r in day:
+                  prior_volume[r["contract"]]=r["volume"]
+                  prior_volume_date[r["contract"]]=date
+
+          events=[r for r in selected if r["regime"]=="BIG" and r["activated"]]
+          print(json.dumps({"selected":len(selected),"big":sum(r["regime"]=="BIG" for r in selected),"activated":len(events)},sort_keys=True))
+
+          def tv_symbol(contract):
+              # S50U24 -> TFEX:S50U2024
+              return f"TFEX:{contract[:4]}20{contract[4:]}"
+
+          sem=asyncio.Semaphore(3)
+          async def fetch_event(ev):
+              async with sem:
+                  date=datetime.fromisoformat(ev["date"]).date()
+                  start=datetime(date.year,date.month,date.day,tzinfo=UTC)-timedelta(hours=7)
+                  end=start+timedelta(days=1)
+                  symbol=tv_symbol(ev["contract"])
+                  last_err=None
+                  for attempt in range(1,4):
+                      try:
+                          async with OHLCV(cookies=None) as client:
+                              bars=await client.get_historical_ohlcv(symbol,interval="5",start=start,end=end)
+                          rows=[]
+                          for b in bars:
+                              ts=datetime.fromtimestamp(b.timestamp,tz=UTC)
+                              if start<=ts<end:
+                                  rows.append({
+                                      "date":ev["date"],"contract":ev["contract"],"tv_symbol":symbol,
+                                      "timestamp_utc":ts.isoformat(),
+                                      "timestamp_bkk":(ts+timedelta(hours=7)).isoformat(),
+                                      "open":float(b.open),"high":float(b.high),"low":float(b.low),"close":float(b.close),"volume":float(b.volume),
+                                  })
+                          rows.sort(key=lambda x:x["timestamp_utc"])
+                          if rows: return ev,rows,None
+                          last_err="0 bars"
+                      except Exception as e:
+                          last_err=repr(e)
+                      await asyncio.sleep(attempt*1.5)
+                  return ev,[],last_err
+
+          async def fetch_all():
+              tasks=[fetch_event(e) for e in events]
+              return await asyncio.gather(*tasks)
+          fetched=asyncio.run(fetch_all())
+
+          allbars=[]
+          analyses=[]
+          fetch_errors=[]
+          def reaches(bar,level,d):
+              return bar["high"]>=level-1e-9 if d>0 else bar["low"]<=level+1e-9
+          def open_beyond(bar,level,d):
+              return bar["open"]>=level-1e-9 if d>0 else bar["open"]<=level+1e-9
+
+          for ev,bars,err in fetched:
+              if not bars:
+                  fetch_errors.append({"date":ev["date"],"contract":ev["contract"],"error":err})
+                  continue
+              allbars.extend(bars)
+              d=1 if ev["direction"]=="UP" else -1
+              levels=ev["levels"]
+              crossing=[]
+              search_idx=0
+              same_bar_multi=0
+              gap_cross=0
+              previous_idx=None
+              for level in levels:
+                  found=None
+                  for i in range(search_idx,len(bars)):
+                      if reaches(bars[i],level,d):
+                          found=i; break
+                  if found is None:
+                      crossing.append(None)
+                      continue
+                  if previous_idx is not None and found==previous_idx:
+                      same_bar_multi+=1
+                  if open_beyond(bars[found],level,d):
+                      gap_cross+=1
+                  crossing.append(found)
+                  previous_idx=found
+                  search_idx=found # monotonic thresholds may cross in same bar
+
+              confirmation_idx=crossing[0]
+              completed=0
+              if confirmation_idx is not None:
+                  for j in range(1,K+1):
+                      if crossing[j] is not None: completed=j
+                      else: break
+
+              # Aggregate cross-check against official daily.
+              agg_open=bars[0]["open"]
+              agg_high=max(b["high"] for b in bars)
+              agg_low=min(b["low"] for b in bars)
+              agg_close=bars[-1]["close"]
+              daily_match={
+                  "open_delta":agg_open-ev["open"],
+                  "high_delta":agg_high-ev["high"],
+                  "low_delta":agg_low-ev["low"],
+                  "close_delta":agg_close-ev["close"],
+              }
+
+              # RC1 accounting variants after activation.
+              # Each completed segment = +STEP; first incomplete segment exits from its grid entry.
+              rt = K if completed>=K else min(completed+1,K)
+              entry_level=ev["open"]+d*STEP*(completed+1) # next incomplete segment entry if any
+              if completed>=K:
+                  gross_sp=K*STEP
+                  gross_close=K*STEP
+                  gross_5m=K*STEP
+              else:
+                  gross_sp=completed*STEP + d*(ev["settle"]-entry_level)
+                  gross_close=completed*STEP + d*(ev["close"]-entry_level)
+                  gross_5m=completed*STEP + d*(agg_close-entry_level)
+              net_sp=gross_sp-COST*rt
+              net_close=gross_close-COST*rt
+              net_5m=gross_5m-COST*rt
+
+              analyses.append({
+                  "date":ev["date"],"contract":ev["contract"],"direction":ev["direction"],
+                  "open":ev["open"],"close_ref":ev["close_ref"],"confirmation":ev["confirmation"],
+                  "official_high":ev["high"],"official_low":ev["low"],"official_close":ev["close"],"official_sp":ev["settle"],
+                  "bars_5m":len(bars),"tv_agg_open":agg_open,"tv_agg_high":agg_high,"tv_agg_low":agg_low,"tv_agg_close":agg_close,
+                  **daily_match,
+                  "confirmation_time_bkk":bars[confirmation_idx]["timestamp_bkk"] if confirmation_idx is not None else None,
+                  "completed_segments_5m":completed,"roundtrips":rt,
+                  "same_bar_multi_threshold_count":same_bar_multi,"gap_cross_threshold_count":gap_cross,
+                  "gross_sp_fallback":gross_sp,"net_sp_fallback":net_sp,
+                  "gross_official_close_fallback":gross_close,"net_official_close_fallback":net_close,
+                  "gross_5m_last_close_fallback":gross_5m,"net_5m_last_close_fallback":net_5m,
+              })
+
+          # Write artifacts.
+          if allbars:
+              keys=list(allbars[0])
+              with (OUT/"tv5m_bars.csv").open("w",encoding="utf-8",newline="") as f:
+                  w=csv.DictWriter(f,fieldnames=keys); w.writeheader(); w.writerows(allbars)
+          if analyses:
+              keys=list(analyses[0])
+              with (OUT/"event_sequence_analysis.csv").open("w",encoding="utf-8",newline="") as f:
+                  w=csv.DictWriter(f,fieldnames=keys); w.writeheader(); w.writerows(analyses)
+
+          def metric(key):
+              vals=[a[key] for a in analyses]
+              pos=sum(x for x in vals if x>0); neg=-sum(x for x in vals if x<0)
+              return {"n":len(vals),"total":sum(vals),"mean":sum(vals)/len(vals) if vals else None,"pf":pos/neg if neg else None,"min":min(vals) if vals else None}
+
+          exact_daily=[a for a in analyses if abs(a["open_delta"])<=0.11 and abs(a["high_delta"])<=0.11 and abs(a["low_delta"])<=0.11 and abs(a["close_delta"])<=0.11]
+          no_gap=[a for a in analyses if a["gap_cross_threshold_count"]==0]
+          summary={
+              "source_role":"TradingView TFEX per-contract 5m sequence cross-check; not canonical TFEX settlement source",
+              "official_daily_events_expected":len(events),
+              "events_with_5m":len(analyses),
+              "fetch_errors":fetch_errors,
+              "bars_total":len(allbars),
+              "daily_ohlc_exact_within_0p11":len(exact_daily),
+              "events_no_threshold_gap_cross":len(no_gap),
+              "events_with_threshold_gap_cross":sum(a["gap_cross_threshold_count"]>0 for a in analyses),
+              "same_bar_multi_threshold_events":sum(a["same_bar_multi_threshold_count"]>0 for a in analyses),
+              "completed_segment_match_vs_official_daily":sum(a["completed_segments_5m"]==next(e for e in events if e["date"]==a["date"] and e["contract"]==a["contract"]).get("completed_segments_daily",-999) for a in []),
+              "accounting": {
+                  "SP_fallback":metric("net_sp_fallback"),
+                  "official_close_fallback":metric("net_official_close_fallback"),
+                  "5m_last_close_fallback":metric("net_5m_last_close_fallback"),
+              },
+          }
+          # compare completed 5m vs threshold count directly from official H/L
+          mismatch=0
+          for a in analyses:
+              ev=next(e for e in events if e["date"]==a["date"] and e["contract"]==a["contract"])
+              d=1 if ev["direction"]=="UP" else -1
+              completed_daily=0
+              for j in range(2,K+2):
+                  level=ev["open"]+d*STEP*j
+                  hit=ev["high"]>=level-1e-9 if d>0 else ev["low"]<=level+1e-9
+                  if hit: completed_daily=j-1
+                  else: break
+              if completed_daily!=a["completed_segments_5m"]: mismatch+=1
+          summary["completed_segment_mismatch_5m_vs_official_daily"]=mismatch
+          for fn in ["tv5m_bars.csv","event_sequence_analysis.csv"]:
+              p=OUT/fn
+              if p.exists(): summary[fn+"_sha256"]=hashlib.sha256(p.read_bytes()).hexdigest()
+          (OUT/"sequence_summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
+          print(json.dumps(summary,ensure_ascii=False,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formula2-rc1-5m-sequence-replay
+          path: formula2_5m_sequence_artifact/**
+          if-no-files-found: error
+          retention-days: 7
