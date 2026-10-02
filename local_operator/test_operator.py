@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import pathlib
+import sys
 import tempfile
 import unittest
 
@@ -10,6 +11,7 @@ MODULE_PATH = pathlib.Path(__file__).with_name("ws_local_operator.py")
 SPEC = importlib.util.spec_from_file_location("ws_local_operator", MODULE_PATH)
 assert SPEC and SPEC.loader
 operator = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = operator
 SPEC.loader.exec_module(operator)
 
 
