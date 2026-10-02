@@ -52,6 +52,7 @@ def main() -> int:
             "no_secret_upload",
             "no_private_formula_upload",
             "no_broker_execution",
+            "no_direct_mcp_execution",
         ]:
             if gates.get(key) is not True:
                 failures.append(f"gate not true: {key}")
