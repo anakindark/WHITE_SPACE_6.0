@@ -28,6 +28,12 @@ ALLOWLIST = {
     ".github/ISSUE_TEMPLATE/white-space-operator-task.yml",
     ".github/pull_request_template.md",
     "docs/WHITE_SPACE_CODEX_GITHUB_BRIDGE.md",
+    "docs/WHITE_SPACE_CHATGPT_MCP_BRIDGE.md",
+    "mcp_bridge/.env.example",
+    "mcp_bridge/README.md",
+    "mcp_bridge/package.json",
+    "mcp_bridge/server.js",
+    "mcp_bridge/test/integration.test.js",
     "scripts/white_space_public_ci_check.py",
     "white_space_operator_bridge_manifest.json",
     "README.md",
@@ -47,15 +53,15 @@ def main() -> int:
             "no_secret_upload",
             "no_private_formula_upload",
             "no_broker_execution",
+            "no_direct_mcp_execution",
         ]:
             if gates.get(key) is not True:
                 failures.append(f"gate not true: {key}")
 
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or ".git" in path.parts:
-            continue
-        rel = str(path.relative_to(ROOT))
-        if rel not in ALLOWLIST:
+    for rel in sorted(ALLOWLIST):
+        path = ROOT / rel
+        if not path.exists():
+            failures.append(f"missing allowlisted file: {rel}")
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for marker in PRIVATE_MARKERS:

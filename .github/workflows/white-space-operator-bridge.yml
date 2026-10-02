@@ -7,6 +7,7 @@ on:
     paths:
       - "docs/**"
       - "scripts/**"
+      - "mcp_bridge/**"
       - ".github/**"
       - "white_space_operator_bridge_manifest.json"
 
@@ -21,5 +22,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: Run public bridge safety check
         run: python scripts/white_space_public_ci_check.py
+      - name: Install MCP bridge dependencies
+        run: npm install --prefix mcp_bridge --ignore-scripts
+      - name: Check MCP bridge syntax
+        run: npm --prefix mcp_bridge run check
+      - name: Run MCP bridge integration test
+        run: npm --prefix mcp_bridge test
