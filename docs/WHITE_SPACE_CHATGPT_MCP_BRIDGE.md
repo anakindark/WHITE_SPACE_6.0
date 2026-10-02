@@ -32,34 +32,51 @@ PC runtime / local tools / RTX / cache
 
 The bridge never treats chat memory as live system state. Read tools request the current PC-side state every time.
 
-## V1 tool surface
+## Tool surface
 
-- `bridge_contract`: fixed authority model
-- `runtime_health`: live health read
-- `system_state`: canonical state read + SHA-256 observation hash
-- `queue_status`: live queue read
-- `capabilities`: live capability read
-- `propose_action`: creates an unapproved, non-executing proposal
+Always present:
 
-There is intentionally no MCP tool for approval or direct execution in V1.
+- `bridge_contract`
+- `runtime_health`
+- `system_state`
+- `queue_status`
+- `capabilities`
+
+Optional, disabled by default:
+
+- `propose_action` — creates an unapproved, non-executing proposal only
+
+There is intentionally no MCP tool for approval or direct execution.
 
 ## Drift controls
 
-1. Read-before-propose.
-2. Canonical state stays on WHITE_SPACE.
-3. Every proposal carries an observation hash.
-4. No model-side approval.
-5. No model-side execution.
-6. Fixed tool schemas and bounded endpoints.
-7. Fail closed on API errors.
-8. Keep secrets and private formulas local.
+1. Canonical state stays on WHITE_SPACE.
+2. Live reads never fall back to chat memory.
+3. Proposal mode performs read-before-propose.
+4. Proposal mode carries a stable state SHA-256 observation hash.
+5. No model-side approval.
+6. No model-side execution.
+7. Fixed endpoint allowlist.
+8. Fixed tool schemas.
+9. Bounded response size and timeout.
+10. HTTP redirects rejected.
+11. Fail closed on API errors.
+12. Keep secrets and private formulas local.
 
 ## PC-side requirement
 
-The proposal endpoint should reject execution and keep a proposal pending until a separate local human-approval mechanism confirms it. The PC runtime should compare the proposal's `observed_state_sha256` or an equivalent revision token against current state before executing.
+The live PC runtime must provide the exact endpoint contract configured in `mcp_bridge/.env`.
+
+If proposal mode is ever enabled, the proposal endpoint must keep every proposal pending until a separate local human-approval mechanism confirms it. The PC runtime should also compare the proposal observation hash or a stronger canonical revision token against current state before execution.
 
 ## Connectivity
 
-The MCP server should remain private. For ChatGPT access to a private/local MCP server, use Secure MCP Tunnel rather than exposing the WHITE_SPACE API directly.
+The MCP server remains on loopback. ChatGPT reaches a private/local MCP server through Secure MCP Tunnel rather than by exposing WHITE_SPACE directly to the public internet.
 
 The ChatGPT-facing MCP endpoint and the WHITE_SPACE internal API are separate trust boundaries.
+
+## Current ChatGPT availability
+
+As of 2026-10-03, OpenAI documents full MCP write/modify support as a Business and Enterprise/Edu beta. Pro users can connect custom MCPs with read/fetch permissions in developer mode. MCP apps are currently web-only.
+
+Therefore the production default is read-only. The proposal tool remains opt-in for a workspace that supports MCP write actions.
