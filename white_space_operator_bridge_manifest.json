@@ -3,6 +3,7 @@
   "default_gates": {
     "human_final_authority": true,
     "no_broker_execution": true,
+    "no_direct_mcp_execution": true,
     "no_paid_cloud_without_budget_gate": true,
     "no_private_formula_upload": true,
     "no_secret_upload": true,
@@ -15,6 +16,17 @@
     "Codex writes sanitized result summary/evidence hash back to GitHub only when approved.",
     "Live/destructive/broker actions remain blocked unless a separate explicit gate is opened."
   ],
+  "chatgpt_mcp_bridge": {
+    "chat_role": "non-canonical controller",
+    "white_space_api_role": "source of truth",
+    "pc_runtime_role": "canonical executor",
+    "mcp_tools_role": "contract",
+    "human_role": "final authority",
+    "v1_execution_tools_enabled": false,
+    "v1_write_surface": "proposal creation only",
+    "read_before_propose": true,
+    "fail_closed_on_api_error": true
+  },
   "package": "WHITE_SPACE_GITHUB_OPERATOR_BRIDGE_PACKAGE",
   "privacy_model": {
     "github_allowed": [
@@ -22,15 +34,17 @@
       "public CI checks",
       "sanitized capability summaries",
       "issue/pr workflow",
-      "non-secret evidence hashes"
+      "non-secret evidence hashes",
+      "MCP bridge source without credentials"
     ],
     "local_only": [
       "TFEX private formula implementation and constants",
       "raw market datasets",
       "broker credentials",
       "live trading actions",
-      "paid provider secrets"
+      "paid provider secrets",
+      "WHITE_SPACE runtime credentials"
     ]
   },
-  "purpose": "Use GitHub as public/control-plane companion for Codex operator-hands work."
+  "purpose": "Use GitHub as public/control-plane companion for Codex operator-hands work and a guarded ChatGPT MCP bridge."
 }
