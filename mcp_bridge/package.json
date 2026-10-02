@@ -8,8 +8,9 @@
   },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check test/integration.test.js",
-    "test": "node --test test/integration.test.js"
+    "check": "node --check server.js && node --check verify_live.js && node --check test/integration.test.js",
+    "test": "node --test test/integration.test.js",
+    "verify:live": "node verify_live.js"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.0.0",
