@@ -29,11 +29,17 @@ ALLOWLIST = {
     ".github/pull_request_template.md",
     "docs/WHITE_SPACE_CODEX_GITHUB_BRIDGE.md",
     "docs/WHITE_SPACE_CHATGPT_MCP_BRIDGE.md",
+    "docs/WHITE_SPACE_DESKTOP_PLUGIN.md",
     "mcp_bridge/.env.example",
     "mcp_bridge/README.md",
     "mcp_bridge/package.json",
     "mcp_bridge/server.js",
     "mcp_bridge/test/integration.test.js",
+    "mcp_bridge/run_local_mac.sh",
+    "mcp_bridge/run_local_windows.ps1",
+    "plugins/white-space-controller/plugin.json",
+    "plugins/white-space-controller/mcp.json",
+    "plugins/white-space-controller/skills/white-space-live-state/SKILL.md",
     "scripts/white_space_public_ci_check.py",
     "white_space_operator_bridge_manifest.json",
     "README.md",
@@ -67,6 +73,16 @@ def main() -> int:
         for marker in PRIVATE_MARKERS:
             if marker in text:
                 failures.append(f"private marker found in {rel}: {marker}")
+
+    for rel in [
+        "plugins/white-space-controller/plugin.json",
+        "plugins/white-space-controller/mcp.json",
+    ]:
+        path = ROOT / rel
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            failures.append(f"invalid plugin JSON in {rel}: {exc}")
 
     report = {
         "status": "PASS" if not failures else "FAIL",
