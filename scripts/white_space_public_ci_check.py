@@ -33,6 +33,7 @@ ALLOWLIST = {
     "mcp_bridge/README.md",
     "mcp_bridge/package.json",
     "mcp_bridge/server.js",
+    "mcp_bridge/test/integration.test.js",
     "scripts/white_space_public_ci_check.py",
     "white_space_operator_bridge_manifest.json",
     "README.md",
