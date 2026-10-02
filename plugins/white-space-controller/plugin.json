@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "white-space-controller",
+  "version": "0.1.0",
+  "description": "Read live WHITE_SPACE runtime state from the local guarded MCP bridge without treating chat memory as canonical.",
+  "repository": "https://github.com/anakindark/WHITE_SPACE_6.0",
+  "keywords": ["white-space", "mcp", "local", "runtime", "governance"]
+}
