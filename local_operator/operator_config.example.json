@@ -1,0 +1,11 @@
+{
+  "repository": "anakindark/WHITE_SPACE_6.0",
+  "issue_number": 4,
+  "allowed_authors": [
+    "anakindark"
+  ],
+  "host_id": "PC_BIRD",
+  "poll_seconds": 30,
+  "state_dir": "~/.white_space/operator",
+  "repository_root": ".."
+}
