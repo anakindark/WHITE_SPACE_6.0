@@ -1,58 +1,165 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import { pathToFileURL } from "node:url";
 
-const PORT = Number(process.env.PORT ?? 8787);
-const HOST = process.env.HOST ?? "127.0.0.1";
-const MCP_PATH = process.env.MCP_PATH ?? "/mcp";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import {
+  localhostHostValidation,
+  localhostOriginValidation,
+  toNodeHandler,
+} from "@modelcontextprotocol/node";
+import * as z from "zod/v4";
 
-const WS_API_BASE = process.env.WS_API_BASE ?? "http://127.0.0.1:8820";
-const WS_HEALTH_PATH = process.env.WS_HEALTH_PATH ?? "/health";
-const WS_STATE_PATH = process.env.WS_STATE_PATH ?? "/state";
-const WS_QUEUE_PATH = process.env.WS_QUEUE_PATH ?? "/queue";
-const WS_CAPABILITIES_PATH = process.env.WS_CAPABILITIES_PATH ?? "/capabilities";
-const WS_PROPOSAL_PATH = process.env.WS_PROPOSAL_PATH ?? "/proposals";
-const WS_TIMEOUT_MS = Number(process.env.WS_TIMEOUT_MS ?? 5000);
-const WS_BRIDGE_BEARER_TOKEN = process.env.WS_BRIDGE_BEARER_TOKEN ?? "";
+const DEFAULTS = Object.freeze({
+  HOST: "127.0.0.1",
+  PORT: "8787",
+  MCP_PATH: "/mcp",
+  WS_API_BASE: "http://127.0.0.1:8820",
+  WS_HEALTH_PATH: "/health",
+  WS_STATE_PATH: "/state",
+  WS_QUEUE_PATH: "/queue",
+  WS_CAPABILITIES_PATH: "/capabilities",
+  WS_PROPOSAL_PATH: "/proposals",
+  WS_TIMEOUT_MS: "5000",
+  WS_MAX_RESPONSE_BYTES: "1048576",
+  WS_ALLOWED_API_HOSTS: "127.0.0.1,localhost,::1,[::1]",
+  WS_ENABLE_PROPOSALS: "false",
+});
 
-function ensureSafeBaseUrl(value) {
+function envValue(env, key) {
+  return env[key] ?? DEFAULTS[key] ?? "";
+}
+
+function parseBool(value) {
+  return String(value).trim().toLowerCase() === "true";
+}
+
+function normalizeHost(hostname) {
+  return hostname.toLowerCase();
+}
+
+function parseAllowedHosts(value) {
+  return new Set(
+    String(value)
+      .split(",")
+      .map((v) => normalizeHost(v.trim()))
+      .filter(Boolean)
+  );
+}
+
+function validateApiBase(value, allowedHosts) {
   const url = new URL(value);
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("WS_API_BASE must use http or https.");
   }
+  if (!allowedHosts.has(normalizeHost(url.hostname))) {
+    throw new Error(
+      `WS_API_BASE hostname "${url.hostname}" is not in WS_ALLOWED_API_HOSTS.`
+    );
+  }
   return url;
 }
 
-const wsBaseUrl = ensureSafeBaseUrl(WS_API_BASE);
-
-function endpoint(path) {
-  if (!path.startsWith("/")) {
-    throw new Error("WHITE_SPACE API paths must start with '/'.");
+function validatePath(value, name) {
+  if (
+    typeof value !== "string" ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value.includes("..") ||
+    value.includes("?") ||
+    value.includes("#")
+  ) {
+    throw new Error(`${name} must be a fixed absolute path without '..', query, or fragment.`);
   }
-  return new URL(path, wsBaseUrl).toString();
+  return value;
 }
 
-async function wsRequest(path, { method = "GET", body } = {}) {
+export function buildBridgeConfig(env = process.env) {
+  const allowedApiHosts = parseAllowedHosts(envValue(env, "WS_ALLOWED_API_HOSTS"));
+  const apiBase = validateApiBase(envValue(env, "WS_API_BASE"), allowedApiHosts);
+
+  const port = Number(envValue(env, "PORT"));
+  const timeoutMs = Number(envValue(env, "WS_TIMEOUT_MS"));
+  const maxResponseBytes = Number(envValue(env, "WS_MAX_RESPONSE_BYTES"));
+
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error("PORT must be an integer from 0 to 65535.");
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120000) {
+    throw new Error("WS_TIMEOUT_MS must be an integer from 100 to 120000.");
+  }
+  if (
+    !Number.isInteger(maxResponseBytes) ||
+    maxResponseBytes < 1024 ||
+    maxResponseBytes > 10 * 1024 * 1024
+  ) {
+    throw new Error(
+      "WS_MAX_RESPONSE_BYTES must be between 1024 and 10485760 bytes."
+    );
+  }
+
+  return Object.freeze({
+    host: envValue(env, "HOST"),
+    port,
+    mcpPath: validatePath(envValue(env, "MCP_PATH"), "MCP_PATH"),
+    apiBase,
+    healthPath: validatePath(envValue(env, "WS_HEALTH_PATH"), "WS_HEALTH_PATH"),
+    statePath: validatePath(envValue(env, "WS_STATE_PATH"), "WS_STATE_PATH"),
+    queuePath: validatePath(envValue(env, "WS_QUEUE_PATH"), "WS_QUEUE_PATH"),
+    capabilitiesPath: validatePath(
+      envValue(env, "WS_CAPABILITIES_PATH"),
+      "WS_CAPABILITIES_PATH"
+    ),
+    proposalPath: validatePath(
+      envValue(env, "WS_PROPOSAL_PATH"),
+      "WS_PROPOSAL_PATH"
+    ),
+    timeoutMs,
+    maxResponseBytes,
+    bearerToken: env.WS_BRIDGE_BEARER_TOKEN ?? "",
+    proposalsEnabled: parseBool(envValue(env, "WS_ENABLE_PROPOSALS")),
+  });
+}
+
+function endpoint(config, path) {
+  return new URL(path, config.apiBase).toString();
+}
+
+async function readBoundedText(response, maxBytes) {
+  const text = await response.text();
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > maxBytes) {
+    throw new Error(
+      `WHITE_SPACE API response exceeded ${maxBytes} bytes (${bytes} bytes received).`
+    );
+  }
+  return text;
+}
+
+export async function wsRequest(
+  config,
+  path,
+  { method = "GET", body } = {}
+) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), WS_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
 
   const headers = { accept: "application/json" };
   if (body !== undefined) headers["content-type"] = "application/json";
-  if (WS_BRIDGE_BEARER_TOKEN) {
-    headers.authorization = `Bearer ${WS_BRIDGE_BEARER_TOKEN}`;
+  if (config.bearerToken) {
+    headers.authorization = `Bearer ${config.bearerToken}`;
   }
 
   try {
-    const response = await fetch(endpoint(path), {
+    const response = await fetch(endpoint(config, path), {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
+      redirect: "error",
     });
 
-    const raw = await response.text();
+    const raw = await readBoundedText(response, config.maxResponseBytes);
     let data;
     try {
       data = raw ? JSON.parse(raw) : {};
@@ -72,9 +179,23 @@ async function wsRequest(path, { method = "GET", body } = {}) {
   }
 }
 
-function sha256(value) {
+function stableValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, stableValue(value[key])])
+    );
+  }
+  return value;
+}
+
+export function sha256State(value) {
   return createHash("sha256")
-    .update(JSON.stringify(value))
+    .update(JSON.stringify(stableValue(value)))
     .digest("hex");
 }
 
@@ -85,17 +206,16 @@ function result(message, data) {
   };
 }
 
-function createWhiteSpaceServer() {
+export function createWhiteSpaceServer(config) {
   const server = new McpServer(
     {
       name: "white-space-controller",
-      version: "0.1.0",
+      version: "0.2.0",
     },
     {
       instructions:
-        "WHITE_SPACE is canonical; chat context is not. Read live state before any proposal. " +
-        "This bridge exposes observation plus proposal creation only. It never approves or executes a proposal. " +
-        "Human approval remains authoritative.",
+        "WHITE_SPACE is canonical; chat context is not. Read live state before interpreting system state. " +
+        "No MCP tool may approve or execute a local action. Human approval remains authoritative.",
     }
   );
 
@@ -104,19 +224,12 @@ function createWhiteSpaceServer() {
     {
       title: "Read WHITE_SPACE bridge contract",
       description:
-        "Returns the fixed authority model for this bridge. Use this to confirm who owns state, execution, tool contracts, and final approval.",
-      inputSchema: {},
-      outputSchema: {
-        chat: z.literal("non-canonical controller"),
-        white_space_api: z.literal("source of truth"),
-        pc_runtime: z.literal("canonical executor"),
-        mcp_tools: z.literal("contract"),
-        human_final: z.literal("authority"),
-        execution_available: z.literal(false),
-      },
+        "Returns the fixed authority model for this bridge. This is configuration, not remembered chat state.",
+      inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
     },
@@ -127,7 +240,8 @@ function createWhiteSpaceServer() {
         pc_runtime: "canonical executor",
         mcp_tools: "contract",
         human_final: "authority",
-        execution_available: false,
+        direct_execution_available: false,
+        proposals_enabled: config.proposalsEnabled,
       })
   );
 
@@ -136,16 +250,17 @@ function createWhiteSpaceServer() {
     {
       title: "Read WHITE_SPACE runtime health",
       description:
-        "Reads the live runtime health from WHITE_SPACE. Do not infer health from chat history.",
-      inputSchema: {},
+        "Reads live runtime health from WHITE_SPACE. Never substitutes chat memory for a failed read.",
+      inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
     },
     async () => {
-      const data = await wsRequest(WS_HEALTH_PATH);
+      const data = await wsRequest(config, config.healthPath);
       return result("Live WHITE_SPACE runtime health read.", { data });
     }
   );
@@ -155,19 +270,20 @@ function createWhiteSpaceServer() {
     {
       title: "Read canonical WHITE_SPACE state",
       description:
-        "Reads the current canonical WHITE_SPACE state directly from the API. Use before interpreting or proposing changes.",
-      inputSchema: {},
+        "Reads the current canonical WHITE_SPACE state directly from the configured API and returns a stable SHA-256 observation hash.",
+      inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
     },
     async () => {
-      const data = await wsRequest(WS_STATE_PATH);
+      const data = await wsRequest(config, config.statePath);
       return result("Canonical WHITE_SPACE state read.", {
         data,
-        state_sha256: sha256(data),
+        state_sha256: sha256State(data),
       });
     }
   );
@@ -176,17 +292,17 @@ function createWhiteSpaceServer() {
     "queue_status",
     {
       title: "Read WHITE_SPACE queue status",
-      description:
-        "Reads the live WHITE_SPACE queue without changing it.",
-      inputSchema: {},
+      description: "Reads the live WHITE_SPACE queue without changing it.",
+      inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
     },
     async () => {
-      const data = await wsRequest(WS_QUEUE_PATH);
+      const data = await wsRequest(config, config.queuePath);
       return result("Live WHITE_SPACE queue status read.", { data });
     }
   );
@@ -196,143 +312,174 @@ function createWhiteSpaceServer() {
     {
       title: "Read WHITE_SPACE capabilities",
       description:
-        "Reads the current capability surface exposed by WHITE_SPACE. The returned data is authoritative only for the moment it was read.",
-      inputSchema: {},
+        "Reads the current capability surface exposed by WHITE_SPACE. The result is authoritative only for the time of the read.",
+      inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
     },
     async () => {
-      const data = await wsRequest(WS_CAPABILITIES_PATH);
+      const data = await wsRequest(config, config.capabilitiesPath);
       return result("Live WHITE_SPACE capabilities read.", { data });
     }
   );
 
-  server.registerTool(
-    "propose_action",
-    {
-      title: "Create a WHITE_SPACE action proposal",
-      description:
-        "Creates a proposal for the local WHITE_SPACE runtime. This does not approve or execute anything. Human approval is required outside this MCP bridge.",
-      inputSchema: {
-        action: z.string().min(1).max(120),
-        reason: z.string().min(1).max(2000),
-        parameters: z.record(z.unknown()).optional(),
+  if (config.proposalsEnabled) {
+    server.registerTool(
+      "propose_action",
+      {
+        title: "Create a WHITE_SPACE action proposal",
+        description:
+          "Creates an unapproved proposal in WHITE_SPACE. It cannot approve or execute the proposal. Human approval remains outside this bridge.",
+        inputSchema: z.object({
+          action: z.string().min(1).max(120),
+          reason: z.string().min(1).max(2000),
+          parameters: z.record(z.string(), z.unknown()).optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
       },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
-    },
-    async ({ action, reason, parameters = {} }) => {
-      const currentState = await wsRequest(WS_STATE_PATH);
-      const observedStateSha256 = sha256(currentState);
-      const proposalId = randomUUID();
+      async ({ action, reason, parameters = {} }) => {
+        const currentState = await wsRequest(config, config.statePath);
+        const observedStateSha256 = sha256State(currentState);
+        const proposalId = randomUUID();
 
-      const proposal = {
-        proposal_id: proposalId,
-        action,
-        reason,
-        parameters,
-        requested_by: "chatgpt-mcp",
-        requires_human_approval: true,
-        approved: false,
-        execute: false,
-        observed_state_sha256: observedStateSha256,
-      };
-
-      const response = await wsRequest(WS_PROPOSAL_PATH, {
-        method: "POST",
-        body: proposal,
-      });
-
-      return result(
-        "Proposal created. No action was approved or executed by this bridge.",
-        {
+        const proposal = {
           proposal_id: proposalId,
-          observed_state_sha256: observedStateSha256,
+          action,
+          reason,
+          parameters,
+          requested_by: "chatgpt-mcp",
           requires_human_approval: true,
-          executed: false,
-          runtime_response: response,
-        }
-      );
-    }
-  );
+          approved: false,
+          execute: false,
+          observed_state_sha256: observedStateSha256,
+        };
+
+        const response = await wsRequest(config, config.proposalPath, {
+          method: "POST",
+          body: proposal,
+        });
+
+        return result(
+          "Proposal created. No action was approved or executed by this bridge.",
+          {
+            proposal_id: proposalId,
+            observed_state_sha256: observedStateSha256,
+            requires_human_approval: true,
+            executed: false,
+            runtime_response: response,
+          }
+        );
+      }
+    );
+  }
 
   return server;
 }
 
-const httpServer = createServer(async (req, res) => {
-  if (!req.url) {
-    res.writeHead(400).end("Missing URL");
-    return;
-  }
-
-  const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
-
-  if (req.method === "GET" && url.pathname === "/") {
-    res
-      .writeHead(200, { "content-type": "application/json" })
-      .end(
-        JSON.stringify({
-          service: "WHITE_SPACE MCP bridge",
-          mode: "non-canonical-controller",
-          mcp: MCP_PATH,
-          execution_available: false,
-        })
-      );
-    return;
-  }
-
-  if (req.method === "OPTIONS" && url.pathname === MCP_PATH) {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "content-type, mcp-session-id",
-      "Access-Control-Expose-Headers": "Mcp-Session-Id",
-    });
-    res.end();
-    return;
-  }
-
-  const allowedMethods = new Set(["POST", "GET", "DELETE"]);
-  if (url.pathname === MCP_PATH && req.method && allowedMethods.has(req.method)) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
-
-    const server = createWhiteSpaceServer();
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
-
-    res.on("close", () => {
-      transport.close();
-      server.close();
-    });
-
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res);
-    } catch (error) {
-      console.error("MCP request failed:", error);
-      if (!res.headersSent) {
-        res.writeHead(500).end("Internal server error");
-      }
-    }
-    return;
-  }
-
-  res.writeHead(404).end("Not Found");
-});
-
-httpServer.listen(PORT, HOST, () => {
-  console.log(
-    `WHITE_SPACE MCP bridge listening on http://${HOST}:${PORT}${MCP_PATH}`
+export async function startBridge({ env = process.env, logger = console } = {}) {
+  const config = buildBridgeConfig(env);
+  const mcpHandler = createMcpHandler(
+    () => createWhiteSpaceServer(config),
+    { responseMode: "json" }
   );
-  console.log(`WHITE_SPACE API base: ${wsBaseUrl.toString()}`);
-  console.log("Execution tools are intentionally disabled; human approval remains final.");
-});
+  const nodeHandler = toNodeHandler(mcpHandler);
+  const validateHost = localhostHostValidation();
+  const validateOrigin = localhostOriginValidation();
+
+  const httpServer = createServer((req, res) => {
+    if (!validateHost(req, res) || !validateOrigin(req, res)) return;
+
+    if (!req.url) {
+      res.writeHead(400).end("Missing URL");
+      return;
+    }
+
+    const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+
+    if (req.method === "GET" && url.pathname === "/") {
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(
+          JSON.stringify({
+            service: "WHITE_SPACE MCP bridge",
+            version: "0.2.0",
+            mode: "non-canonical-controller",
+            mcp: config.mcpPath,
+            direct_execution_available: false,
+            proposals_enabled: config.proposalsEnabled,
+          })
+        );
+      return;
+    }
+
+    if (url.pathname !== config.mcpPath) {
+      res.writeHead(404).end("Not Found");
+      return;
+    }
+
+    void nodeHandler(req, res);
+  });
+
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      httpServer.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      httpServer.off("error", onError);
+      resolve();
+    };
+    httpServer.once("error", onError);
+    httpServer.once("listening", onListening);
+    httpServer.listen(config.port, config.host);
+  });
+
+  const address = httpServer.address();
+  const actualPort =
+    address && typeof address === "object" ? address.port : config.port;
+
+  logger.error(
+    `WHITE_SPACE MCP bridge listening on http://${config.host}:${actualPort}${config.mcpPath}`
+  );
+  logger.error(
+    `WHITE_SPACE API base: ${config.apiBase.origin}; direct execution disabled; proposals=${config.proposalsEnabled}`
+  );
+
+  return {
+    config,
+    port: actualPort,
+    httpServer,
+    mcpHandler,
+    async close() {
+      httpServer.closeAllConnections?.();
+      await mcpHandler.close();
+      await new Promise((resolve) => {
+        if (!httpServer.listening) {
+          resolve();
+          return;
+        }
+        httpServer.close(() => resolve());
+      });
+    },
+  };
+}
+
+const isMain =
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMain) {
+  startBridge().catch((error) => {
+    console.error(error instanceof Error ? error.stack : String(error));
+    process.exitCode = 1;
+  });
+}
