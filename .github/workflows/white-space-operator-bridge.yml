@@ -31,3 +31,5 @@ jobs:
         run: npm install --prefix mcp_bridge --ignore-scripts
       - name: Check MCP bridge syntax
         run: npm --prefix mcp_bridge run check
+      - name: Run MCP bridge integration test
+        run: npm --prefix mcp_bridge test
